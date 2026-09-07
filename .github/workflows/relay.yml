@@ -1,0 +1,54 @@
+name: relay-cnb-env
+
+# 定时接力调度: 每 30 分钟检查一次云开发环境寿命并自动接力
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}   # 允许手动触发
+
+permissions:
+  contents: write
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 安装 cnb CLI
+        run: npm i -g @cnbcool/cnb-cli
+
+      - name: 校验必填 Secrets
+        run: |
+          if [ -z "$RELAY_REPO" ]; then
+            echo "::error::缺少 secrets.RELAY_REPO —— 请在仓库 Settings→Secrets and variables→Actions 配置你的 CNB 仓库(格式: 组/仓库名, fork 后即 你的用户名/cnb-workspace-always-on)"
+            exit 1
+          fi
+          if [ -z "$CNB_TOKEN" ]; then
+            echo "::error::缺少 secrets.CNB_TOKEN —— 请配置 CNB 访问令牌"
+            exit 1
+          fi
+          echo "RELAY_REPO=$RELAY_REPO"
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          RELAY_REPO: ${{ secrets.RELAY_REPO }}
+
+      - name: 运行环境接力控制器
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          CNB_API_ENDPOINT: ${{ secrets.CNB_API_ENDPOINT || 'https://api.cnb.cool' }}
+          RELAY_REPO: ${{ secrets.RELAY_REPO }}
+        run: |
+          bash relay/relay.sh --apply
+
+      - name: 上报最新转发域名 (artifact)
+        if: always()
+        run: |
+          [ -n "$RELAY_REPO" ] && cnb workspace list-workspaces --slug "$RELAY_REPO" --status running || true
+        env:
+          RELAY_REPO: ${{ secrets.RELAY_REPO }}
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
